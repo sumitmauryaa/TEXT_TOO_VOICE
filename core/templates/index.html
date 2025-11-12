@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polyglot Voice Translator</title>
+  {% load static %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+  {% csrf_token %}
+  <div class="container">
+    <div class="header">
+      <h1>Polyglot Voice</h1>
+      <p>Translate text and listen to the pronunciation</p>
+    </div>
+    
+    <div class="input-container">
+      <textarea id="input-text" placeholder="Enter text in English..." autofocus></textarea>
+    </div>
+    
+    <div class="language-selector">
+      <select id="language">
+        <option value="hi">Hindi</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+    
+    <div class="buttons">
+      <button class="translate-btn" onclick="translateText()">
+        <i class="fas fa-language"></i> Translate
+      </button>
+      <button class="speak-btn" onclick="speakText()">
+        <i class="fas fa-volume-up"></i> Listen
+      </button>
+    </div>
+    
+    <div class="loader" id="loader"></div>
+    
+    <div class="output-container">
+      <span class="output-label">Translation:</span>
+      <div id="output-text"></div>
+      
+      <div class="action-buttons">
+        <button class="action-btn" onclick="copyText()">
+          <i class="fas fa-copy"></i> Copy Text
+        </button>
+        <button class="action-btn" onclick="downloadAudio()">
+          <i class="fas fa-download"></i> Download Audio
+        </button>
+      </div>
+    </div>
+    
+    <div class="history-btn" onclick="showHistory()">
+      <i class="fas fa-history"></i>
+    </div>
+  </div>
+  
+  <div class="notification" id="notification"></div>
+  
+  <script>
+    // CSRF token setup for Django (you'll need to implement this properly)
+    function getCookie(name) {
+      let cookieValue = null;
+      if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+          const cookie = cookies[i].trim();
+          if (cookie.substring(0, name.length + 1) === (name + '=')) {
+            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+            break;
+          }
+        }
+      }
+      return cookieValue;
+    }
+    
+    const csrftoken = getCookie('csrftoken');
+    let lastAudioUrl = null;
+    
+    async function translateText() {
+      const inputText = document.getElementById('input-text').value;
+      const language = document.getElementById('language').value;
+      const outputText = document.getElementById('output-text');
+      const loader = document.getElementById('loader');
+      
+      if (!inputText.trim()) {
+        showNotification('Please enter some text to translate');
+        return;
+      }
+      
+      // Show loading animation
+      loader.style.display = 'block';
+      outputText.innerHTML = '';
+      
+      try {
+        const formData = new FormData();
+        formData.append('text', inputText);
+        formData.append('lang', language);
+        
+        const response = await fetch('/translate/', {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': csrftoken,
+          },
+          body: formData
+        });
+        
+        if (!response.ok) {
+          throw new Error('Translation failed');
+        }
+        
+        const data = await response.json();
+        outputText.innerHTML = data.translated_text;
+        showNotification('Translation successful!');
+      } catch (error) {
+        outputText.innerHTML = 'Error: Could not translate text';
+        showNotification('Translation failed. Please try again.');
+        console.error('Translation error:', error);
+      } finally {
+        loader.style.display = 'none';
+      }
+    }
+    
+    async function speakText() {
+      const outputText = document.getElementById('output-text').textContent;
+      const language = document.getElementById('language').value;
+      
+      if (!outputText.trim()) {
+        showNotification('Please translate text first');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`/tts/?text=${encodeURIComponent(outputText)}&lang=${language}`, {
+          headers: {
+            'X-CSRFToken': csrftoken,
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Speech synthesis failed');
+        }
+        
+        // Create audio from response and play it
+        const blob = await response.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        lastAudioUrl = audioUrl; // Store for download
+        
+        const audio = new Audio(audioUrl);
+        audio.play();
+        
+        showNotification('Playing audio...');
+      } catch (error) {
+        showNotification('Could not generate speech. Please try again.');
+        console.error('Speech error:', error);
+      }
+    }
+    
+    function copyText() {
+      const outputText = document.getElementById('output-text').textContent;
+      
+      if (!outputText.trim()) {
+        showNotification('No text to copy');
+        return;
+      }
+      
+      navigator.clipboard.writeText(outputText)
+        .then(() => {
+          showNotification('Text copied to clipboard!');
+        })
+        .catch(err => {
+          showNotification('Failed to copy text');
+          console.error('Copy error:', err);
+        });
+    }
+    
+    function downloadAudio() {
+      if (!lastAudioUrl) {
+        showNotification('Please generate audio first by using the Listen button');
+        return;
+      }
+      
+      const outputText = document.getElementById('output-text').textContent;
+      const language = document.getElementById('language').value;
+      const languageName = document.getElementById('language').options[document.getElementById('language').selectedIndex].text;
+      
+      // Create a download link
+      const a = document.createElement('a');
+      a.href = lastAudioUrl;
+      a.download = `translation-${languageName}-${Date.now()}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      showNotification('Audio download started!');
+    }
+    
+    function showNotification(message) {
+      const notification = document.getElementById('notification');
+      notification.textContent = message;
+      notification.classList.add('show');
+      
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 3000);
+    }
+    
+    function showHistory() {
+      showNotification('History feature would be implemented here');
+      // In a real implementation, this would fetch and display translation history
+    }
+    
+    // Add some interactive effects
+    document.addEventListener('DOMContentLoaded', function() {
+      const textarea = document.getElementById('input-text');
+      const output = document.getElementById('output-text');
+      
+      // Auto-adjust textarea height
+      textarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+      });
+      
+      // Add animation to output when content changes
+      const observer = new MutationObserver(function() {
+        output.style.opacity = 0;
+        setTimeout(() => {
+          output.style.transition = 'opacity 0.5s ease';
+          output.style.opacity = 1;
+        }, 50);
+      });
+      
+      observer.observe(output, { childList: true });
+    });
+  </script>
+</body>
+</html>
